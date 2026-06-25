@@ -45,21 +45,23 @@ export class App {
       const path = window.location.pathname;
       const searchParams = new URLSearchParams(window.location.search);
 
+      // 1. Path-based Labels
       if (path.includes('/search/label/')) {
           const label = path.split('/search/label/')[1].split('?')[0];
           if (label) this.currentLabels.push(decodeURIComponent(label));
       }
 
+      // 2. Query-based Context
       const q = searchParams.get('q');
       if (q) {
           this.currentSearchQuery = q;
 
-          // Patterns for Location cleaning
+          // Pattern-based location stripping (postalCode: PIN or addressLocality: City)
           const patterns = [
-              /"postalCode":\s*"([^"]+)"/,
               /postalCode:\s*([^|\s]+)/,
-              /"addressLocality":\s*"([^"]+)"/,
-              /addressLocality:\s*([^|\s]+)/
+              /addressLocality:\s*([^|\s]+)/,
+              /"postalCode":\s*"([^"]+)"/,
+              /"addressLocality":\s*"([^"]+)"/
           ];
 
           let cleanedQ = q;
@@ -67,9 +69,18 @@ export class App {
               cleanedQ = cleanedQ.replace(p, '').trim();
           });
 
+          // Display query is the user keywords + category labels (for now, or just keywords?)
+          // User said: "search input box should not contain that [location data]"
           this.displaySearchQuery = cleanedQ;
-          this.searchKeywordsOnly = cleanedQ.replace(/label:[^|\s]+/g, '').trim();
 
+          // Extract search keywords (remove label filters and extra separators)
+          this.searchKeywordsOnly = cleanedQ
+            .replace(/label:[^|\s]+/g, '')
+            .replace(/\|/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+          // Extract Labels from query
           const labelRegex = /label:([^|\s]+)/g;
           let match;
           while ((match = labelRegex.exec(q)) !== null) {
@@ -86,10 +97,10 @@ export class App {
   private formatLocationQuery(): string {
       const loc = this.LocationManager.getData();
       if (loc.pin) {
-          return `"postalCode": "${loc.pin}"`;
+          return `postalCode: ${loc.pin}`;
       }
       if (loc.city) {
-          return `"addressLocality": "${loc.city}"`;
+          return `addressLocality: ${loc.city}`;
       }
       return "";
   }
@@ -146,9 +157,11 @@ export class App {
           if (text.toUpperCase() === 'ALL') {
               finalQuery = `${keywords} ${locString}`.trim();
           } else {
+              // Standard format: label:Category Keywords Location
               finalQuery = `label:${text} ${keywords} ${locString}`.trim();
           }
 
+          // Construction of pretty URL
           const prettyQuery = encodeURIComponent(finalQuery)
             .replace(/%20/g, ' ')
             .replace(/%3A/g, ':');
@@ -218,6 +231,7 @@ export class App {
         const searchUrl = searchForm.getAttribute('action') || '/search';
 
         let finalQuery = encodeURIComponent(combinedQuery)
+            .replace(/%20/g, ' ')
             .replace(/%3A/g, ':')
             .replace(/%7C/g, '|');
 
