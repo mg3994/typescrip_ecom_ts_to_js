@@ -45,18 +45,24 @@ export class App {
       const path = window.location.pathname;
       const searchParams = new URLSearchParams(window.location.search);
 
-      // 1. Path-based Labels
       if (path.includes('/search/label/')) {
           const label = path.split('/search/label/')[1].split('?')[0];
           if (label) this.currentLabels.push(decodeURIComponent(label));
       }
 
-      // 2. Query-based Context
       const q = searchParams.get('q');
-      if (q) {
+      if (q !== null) {
+          // If q is empty or just quotes/spaces, clean URL and return
+          if (q.trim() === '' || q.trim() === "''" || q.trim() === '""') {
+              searchParams.delete('q');
+              const newSearch = searchParams.toString();
+              const newUrl = window.location.pathname + (newSearch ? '?' + newSearch : '');
+              window.history.replaceState({}, '', newUrl);
+              return;
+          }
+
           this.currentSearchQuery = q;
 
-          // Pattern-based location stripping (postalCode: PIN or addressLocality: City)
           const patterns = [
               /postalCode:\s*([^|\s]+)/,
               /addressLocality:\s*([^|\s]+)/,
@@ -69,18 +75,9 @@ export class App {
               cleanedQ = cleanedQ.replace(p, '').trim();
           });
 
-          // Display query is the user keywords + category labels (for now, or just keywords?)
-          // User said: "search input box should not contain that [location data]"
           this.displaySearchQuery = cleanedQ;
+          this.searchKeywordsOnly = cleanedQ.replace(/label:[^|\s]+/g, '').trim();
 
-          // Extract search keywords (remove label filters and extra separators)
-          this.searchKeywordsOnly = cleanedQ
-            .replace(/label:[^|\s]+/g, '')
-            .replace(/\|/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-
-          // Extract Labels from query
           const labelRegex = /label:([^|\s]+)/g;
           let match;
           while ((match = labelRegex.exec(q)) !== null) {
@@ -147,8 +144,6 @@ export class App {
       const keywords = this.searchKeywordsOnly.trim();
       const locString = this.formatLocationQuery();
 
-      if (!keywords && !locString) return;
-
       const catLinks = document.querySelectorAll<HTMLAnchorElement>('.cat-link');
       catLinks.forEach(link => {
           const text = link.textContent?.trim() || '';
@@ -157,16 +152,17 @@ export class App {
           if (text.toUpperCase() === 'ALL') {
               finalQuery = `${keywords} ${locString}`.trim();
           } else {
-              // Standard format: label:Category Keywords Location
               finalQuery = `label:${text} ${keywords} ${locString}`.trim();
           }
 
-          // Construction of pretty URL
-          const prettyQuery = encodeURIComponent(finalQuery)
-            .replace(/%20/g, ' ')
-            .replace(/%3A/g, ':');
-
-          link.href = `/search?q=${prettyQuery}`;
+          if (!finalQuery) {
+              link.href = '/search';
+          } else {
+              const prettyQuery = encodeURIComponent(finalQuery)
+                .replace(/%20/g, ' ')
+                .replace(/%3A/g, ':');
+              link.href = `/search?q=${prettyQuery}`;
+          }
       });
   }
 
@@ -230,12 +226,14 @@ export class App {
 
         const searchUrl = searchForm.getAttribute('action') || '/search';
 
-        let finalQuery = encodeURIComponent(combinedQuery)
-            .replace(/%20/g, ' ')
-            .replace(/%3A/g, ':')
-            .replace(/%7C/g, '|');
-
-        window.location.href = `${searchUrl}?q=${finalQuery}`;
+        if (!combinedQuery) {
+            window.location.href = searchUrl;
+        } else {
+            let finalQuery = encodeURIComponent(combinedQuery)
+                .replace(/%3A/g, ':')
+                .replace(/%7C/g, '|');
+            window.location.href = `${searchUrl}?q=${finalQuery}`;
+        }
       };
     }
   }
