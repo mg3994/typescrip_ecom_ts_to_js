@@ -45,52 +45,70 @@ export class App {
       const path = window.location.pathname;
       const searchParams = new URLSearchParams(window.location.search);
 
-      // 1. Path-based Labels
+      // 1. Detect Standard Label View
       if (path.includes('/search/label/')) {
           const label = path.split('/search/label/')[1].split('?')[0];
           if (label) this.currentLabels.push(decodeURIComponent(label));
       }
 
-      // 2. Query-based Context
-      const q = searchParams.get('q');
-      if (q !== null) {
-          const trimmedQ = q.trim().replace(/^["']|["']$/g, '').trim();
+      // 2. Detect Search Query and Query-based Labels
+      const rawQ = searchParams.get('q');
+      if (rawQ !== null) {
+          const trimmedQ = rawQ.trim().replace(/^["']|["']$/g, '').trim();
 
-          if (trimmedQ === '') {
-              // Clean URL but DO NOT return, continue to allow script to load data
+          const technicalPatterns = [
+              /postalCode:\s*([^|\s]+)/g,
+              /addressLocality:\s*([^|\s]+)/g,
+              /"postalCode":\s*"([^"]+)"/g,
+              /"addressLocality":\s*"([^"]+)"/g
+          ];
+
+          let cleanedQ = trimmedQ;
+          let hasTechnical = false;
+          technicalPatterns.forEach(p => {
+              if (p.test(trimmedQ)) {
+                  hasTechnical = true;
+                  cleanedQ = cleanedQ.replace(p, '').trim();
+              }
+          });
+
+          // If the query is empty or only contained technical data, clean the URL bar to /search
+          if (trimmedQ === '' || (hasTechnical && cleanedQ === '')) {
               searchParams.delete('q');
               const newSearch = searchParams.toString();
               const newUrl = window.location.pathname + (newSearch ? '?' + newSearch : '');
-              window.history.replaceState({}, '', newUrl);
+
+              // Force navigation to clean /search if on search page to ensure a fresh state
+              if (window.location.pathname.includes('/search')) {
+                  window.history.replaceState({}, '', newUrl);
+              } else {
+                  window.history.replaceState({}, '', newUrl);
+              }
+
               this.currentSearchQuery = '';
               this.displaySearchQuery = '';
+              this.searchKeywordsOnly = '';
           } else {
-              this.currentSearchQuery = q; // Keep original for API
-
-              const patterns = [
-                  /postalCode:\s*([^|\s]+)/,
-                  /addressLocality:\s*([^|\s]+)/,
-                  /"postalCode":\s*"([^"]+)"/,
-                  /"addressLocality":\s*"([^"]+)"/
-              ];
-
-              let cleanedQ = q;
-              patterns.forEach(p => {
-                  cleanedQ = cleanedQ.replace(p, '').trim();
-              });
-
+              this.currentSearchQuery = cleanedQ;
               this.displaySearchQuery = cleanedQ;
               this.searchKeywordsOnly = cleanedQ.replace(/label:[^|\s]+/g, '').trim();
 
               const labelRegex = /label:([^|\s]+)/g;
               let match;
-              while ((match = labelRegex.exec(q)) !== null) {
+              while ((match = labelRegex.exec(trimmedQ)) !== null) {
                   if (match[1]) {
                       const labelName = decodeURIComponent(match[1].replace(/_/g, ' '));
                       if (!this.currentLabels.includes(labelName)) {
                           this.currentLabels.push(labelName);
                       }
                   }
+              }
+
+              // Update URL if technical data was stripped
+              if (hasTechnical) {
+                  searchParams.set('q', cleanedQ);
+                  const newUrl = window.location.pathname + '?' + searchParams.toString();
+                  window.history.replaceState({}, '', newUrl);
               }
           }
       }
@@ -223,19 +241,15 @@ export class App {
         if (!qInput) return;
 
         const baseQuery = qInput.value.trim();
-        const locString = this.formatLocationQuery();
-
-        const combinedQuery = (locString && !baseQuery.includes(locString))
-            ? `${baseQuery} ${locString}`.trim()
-            : baseQuery;
-
         const searchUrl = searchForm.getAttribute('action') || '/search';
 
-        if (!combinedQuery) {
+        if (!baseQuery) {
+            // Navigate to clean /search (no query string)
             window.location.href = searchUrl;
         } else {
-            let finalQuery = encodeURIComponent(combinedQuery)
-                .replace(/%20/g, ' ') // Keep spaces readable in construct
+            // Keep URL clean of technical data, but we'll use it for filtering during load
+            let finalQuery = encodeURIComponent(baseQuery)
+                .replace(/%20/g, ' ')
                 .replace(/%3A/g, ':')
                 .replace(/%7C/g, '|');
             window.location.href = `${searchUrl}?q=${finalQuery}`;
@@ -271,7 +285,11 @@ export class App {
     const grid = UIManager.el("app-grid");
     if (!grid) return;
 
-    const { entries } = await this.BloggerDataService.fetchFeedData(50, 1, this.currentLabels, this.currentSearchQuery);
+    // Use current search query + current location for fetching, even if location isn't in URL
+    const locString = this.formatLocationQuery();
+    const fetchQuery = (this.currentSearchQuery + " " + locString).trim();
+
+    const { entries } = await this.BloggerDataService.fetchFeedData(50, 1, this.currentLabels, fetchQuery);
 
     if (grid.children.length === 0) {
         this.renderEntriesToGrid(entries, grid);
