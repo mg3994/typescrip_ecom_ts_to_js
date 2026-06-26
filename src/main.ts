@@ -45,46 +45,51 @@ export class App {
       const path = window.location.pathname;
       const searchParams = new URLSearchParams(window.location.search);
 
+      // 1. Path-based Labels
       if (path.includes('/search/label/')) {
           const label = path.split('/search/label/')[1].split('?')[0];
           if (label) this.currentLabels.push(decodeURIComponent(label));
       }
 
+      // 2. Query-based Context
       const q = searchParams.get('q');
       if (q !== null) {
-          // If q is empty or just quotes/spaces, clean URL and return
-          if (q.trim() === '' || q.trim() === "''" || q.trim() === '""') {
+          const trimmedQ = q.trim().replace(/^["']|["']$/g, '').trim();
+
+          if (trimmedQ === '') {
+              // Clean URL but DO NOT return, continue to allow script to load data
               searchParams.delete('q');
               const newSearch = searchParams.toString();
               const newUrl = window.location.pathname + (newSearch ? '?' + newSearch : '');
               window.history.replaceState({}, '', newUrl);
-              return;
-          }
+              this.currentSearchQuery = '';
+              this.displaySearchQuery = '';
+          } else {
+              this.currentSearchQuery = q; // Keep original for API
 
-          this.currentSearchQuery = q;
+              const patterns = [
+                  /postalCode:\s*([^|\s]+)/,
+                  /addressLocality:\s*([^|\s]+)/,
+                  /"postalCode":\s*"([^"]+)"/,
+                  /"addressLocality":\s*"([^"]+)"/
+              ];
 
-          const patterns = [
-              /postalCode:\s*([^|\s]+)/,
-              /addressLocality:\s*([^|\s]+)/,
-              /"postalCode":\s*"([^"]+)"/,
-              /"addressLocality":\s*"([^"]+)"/
-          ];
+              let cleanedQ = q;
+              patterns.forEach(p => {
+                  cleanedQ = cleanedQ.replace(p, '').trim();
+              });
 
-          let cleanedQ = q;
-          patterns.forEach(p => {
-              cleanedQ = cleanedQ.replace(p, '').trim();
-          });
+              this.displaySearchQuery = cleanedQ;
+              this.searchKeywordsOnly = cleanedQ.replace(/label:[^|\s]+/g, '').trim();
 
-          this.displaySearchQuery = cleanedQ;
-          this.searchKeywordsOnly = cleanedQ.replace(/label:[^|\s]+/g, '').trim();
-
-          const labelRegex = /label:([^|\s]+)/g;
-          let match;
-          while ((match = labelRegex.exec(q)) !== null) {
-              if (match[1]) {
-                  const labelName = decodeURIComponent(match[1].replace(/_/g, ' '));
-                  if (!this.currentLabels.includes(labelName)) {
-                      this.currentLabels.push(labelName);
+              const labelRegex = /label:([^|\s]+)/g;
+              let match;
+              while ((match = labelRegex.exec(q)) !== null) {
+                  if (match[1]) {
+                      const labelName = decodeURIComponent(match[1].replace(/_/g, ' '));
+                      if (!this.currentLabels.includes(labelName)) {
+                          this.currentLabels.push(labelName);
+                      }
                   }
               }
           }
@@ -230,6 +235,7 @@ export class App {
             window.location.href = searchUrl;
         } else {
             let finalQuery = encodeURIComponent(combinedQuery)
+                .replace(/%20/g, ' ') // Keep spaces readable in construct
                 .replace(/%3A/g, ':')
                 .replace(/%7C/g, '|');
             window.location.href = `${searchUrl}?q=${finalQuery}`;
