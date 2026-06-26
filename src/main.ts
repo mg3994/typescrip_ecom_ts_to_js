@@ -51,48 +51,41 @@ export class App {
           if (label) this.currentLabels.push(decodeURIComponent(label));
       }
 
-      // 2. Detect Search Query and Query-based Labels
+      // 2. Detect Search Query
       const rawQ = searchParams.get('q');
       if (rawQ !== null) {
           const trimmedQ = rawQ.trim().replace(/^["']|["']$/g, '').trim();
 
-          const technicalPatterns = [
-              /postalCode:\s*([^|\s]+)/g,
-              /addressLocality:\s*([^|\s]+)/g,
-              /"postalCode":\s*"([^"]+)"/g,
-              /"addressLocality":\s*"([^"]+)"/g
-          ];
+          if (trimmedQ === '') {
+              // If ?q= is present but empty, check if we have any location data
+              const loc = this.LocationManager.getData();
+              const hasLocation = !!(loc.pin || loc.city);
 
-          let cleanedQ = trimmedQ;
-          let hasTechnical = false;
-          technicalPatterns.forEach(p => {
-              if (p.test(trimmedQ)) {
-                  hasTechnical = true;
-                  cleanedQ = cleanedQ.replace(p, '').trim();
-              }
-          });
-
-          // If the query is empty or only contained technical data, clean the URL bar to /search
-          if (trimmedQ === '' || (hasTechnical && cleanedQ === '')) {
-              searchParams.delete('q');
-              const newSearch = searchParams.toString();
-              const newUrl = window.location.pathname + (newSearch ? '?' + newSearch : '');
-
-              // Force navigation to clean /search if on search page to ensure a fresh state
-              if (window.location.pathname.includes('/search')) {
-                  window.history.replaceState({}, '', newUrl);
-              } else {
-                  window.history.replaceState({}, '', newUrl);
+              if (!hasLocation) {
+                  // No query, no location -> Go to clean /search and reload
+                  const newUrl = window.location.pathname;
+                  if (window.location.search.includes('q=')) {
+                      window.location.href = newUrl;
+                      return;
+                  }
               }
 
               this.currentSearchQuery = '';
               this.displaySearchQuery = '';
               this.searchKeywordsOnly = '';
           } else {
-              this.currentSearchQuery = cleanedQ;
-              this.displaySearchQuery = cleanedQ;
-              this.searchKeywordsOnly = cleanedQ.replace(/label:[^|\s]+/g, '').trim();
+              // Keep technical data (labels, location) in both current and display query
+              this.currentSearchQuery = trimmedQ;
+              this.displaySearchQuery = trimmedQ;
 
+              // searchKeywordsOnly strips both labels and technical location keys
+              this.searchKeywordsOnly = trimmedQ
+                .replace(/label:[^|\s]+/g, '')
+                .replace(/postalCode:[^|\s]+/g, '')
+                .replace(/addressLocality:[^|\s]+/g, '')
+                .trim();
+
+              // Extract labels for active highlighting
               const labelRegex = /label:([^|\s]+)/g;
               let match;
               while ((match = labelRegex.exec(trimmedQ)) !== null) {
@@ -102,13 +95,6 @@ export class App {
                           this.currentLabels.push(labelName);
                       }
                   }
-              }
-
-              // Update URL if technical data was stripped
-              if (hasTechnical) {
-                  searchParams.set('q', cleanedQ);
-                  const newUrl = window.location.pathname + '?' + searchParams.toString();
-                  window.history.replaceState({}, '', newUrl);
               }
           }
       }
@@ -244,14 +230,22 @@ export class App {
         const searchUrl = searchForm.getAttribute('action') || '/search';
 
         if (!baseQuery) {
-            // Navigate to clean /search (no query string)
+            const loc = this.LocationManager.getData();
+            if (!(loc.pin || loc.city)) {
+                window.location.href = searchUrl;
+                return;
+            }
+        }
+
+        // Preserve technical data in the URL
+        let finalQuery = encodeURIComponent(baseQuery)
+            .replace(/%20/g, ' ')
+            .replace(/%3A/g, ':')
+            .replace(/%7C/g, '|');
+
+        if (!finalQuery) {
             window.location.href = searchUrl;
         } else {
-            // Keep URL clean of technical data, but we'll use it for filtering during load
-            let finalQuery = encodeURIComponent(baseQuery)
-                .replace(/%20/g, ' ')
-                .replace(/%3A/g, ':')
-                .replace(/%7C/g, '|');
             window.location.href = `${searchUrl}?q=${finalQuery}`;
         }
       };
@@ -285,9 +279,14 @@ export class App {
     const grid = UIManager.el("app-grid");
     if (!grid) return;
 
-    // Use current search query + current location for fetching, even if location isn't in URL
+    // Use current search query + current location for fetching.
+    // If the location is already in currentSearchQuery, don't duplicate it.
     const locString = this.formatLocationQuery();
-    const fetchQuery = (this.currentSearchQuery + " " + locString).trim();
+    let fetchQuery = this.currentSearchQuery;
+
+    if (locString && !fetchQuery.includes(locString)) {
+        fetchQuery = (fetchQuery + " " + locString).trim();
+    }
 
     const { entries } = await this.BloggerDataService.fetchFeedData(50, 1, this.currentLabels, fetchQuery);
 
@@ -317,7 +316,14 @@ export class App {
     if (!grid) return;
 
     this.gridStartIndex += this.gridPageSize;
-    const { entries, totalResults } = await this.BloggerDataService.fetchFeedData(this.gridPageSize, this.gridStartIndex, this.currentLabels, this.currentSearchQuery);
+
+    const locString = this.formatLocationQuery();
+    let fetchQuery = this.currentSearchQuery;
+    if (locString && !fetchQuery.includes(locString)) {
+        fetchQuery = (fetchQuery + " " + locString).trim();
+    }
+
+    const { entries, totalResults } = await this.BloggerDataService.fetchFeedData(this.gridPageSize, this.gridStartIndex, this.currentLabels, fetchQuery);
 
     this.renderEntriesToGrid(entries, grid);
 
